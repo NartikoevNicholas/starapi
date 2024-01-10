@@ -3,20 +3,17 @@
 
 require_once(__DIR__.'/../StarSocket.php');
 require_once(__DIR__.'/../abstract/AbstractProtocol.php');
-
+require_once(__DIR__.'/../enum/EnumHTTPMethod.php');
 
 use Socket;
 use Starutils\Starcorn\StarSocket;
 use Starutils\Starcorn\abstract\AbstractProtocol;
+use Starutils\Starcorn\enum\EnumHTTPMethod;
 
 
 final class H11Protocol extends AbstractProtocol
 {
     protected static string $sep = "\r\n";
-    protected static array $methods = [
-        'GET'=>true,
-        'POST'=>true
-    ];
 
     protected string $protocol = 'HTTP';
     protected string $protocol_version = '1.1';
@@ -39,6 +36,7 @@ final class H11Protocol extends AbstractProtocol
         {
             $this->set_client_address($id, $scope);
             $this->parse_body_request($id, $scope);
+
             $app = self::$config->app();
             $content = $app($scope);
             $this->clients_write[$id] = $this->clients_read[$id];
@@ -89,13 +87,6 @@ final class H11Protocol extends AbstractProtocol
         return $this->clients_message[$id];
     }
 
-    protected function set_client_address(string $id, array &$scope): void
-    {
-        socket_getpeername($this->clients_read[$id], $ip, $port);
-        $scope['ip'] = $ip;
-        $scope['port'] = $port;
-    }
-
     protected function set_start_line(string $id, array &$scope): void
     {
         [$row, $buffer] = explode(self::$sep, $this->get_buffer($id), 2);
@@ -110,12 +101,19 @@ final class H11Protocol extends AbstractProtocol
         $this->set_buffer($id, $buffer, false);
     }
 
+    protected function set_client_address(string $id, array &$scope): void
+    {
+        socket_getpeername($this->clients_read[$id], $ip, $port);
+        $scope['ip'] = $ip;
+        $scope['port'] = $port;
+    }
+
     protected function is_current_request(array $scope): bool
     {
         if($this->protocol !== $scope['protocol'] ||
             $this->protocol_version !== $scope['protocol_version']) return false;
 
-        if (!array_key_exists($scope['method'], self::$methods)) return false;
+        if (!EnumHTTPMethod::tryFrom($scope['method'])) return false;
 
         return true;
     }
