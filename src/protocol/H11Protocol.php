@@ -5,6 +5,7 @@ require_once(__DIR__.'/../StarSocket.php');
 require_once(__DIR__.'/../abstract/AbstractProtocol.php');
 
 
+use Socket;
 use Starutils\Starcorn\StarSocket;
 use Starutils\Starcorn\abstract\AbstractProtocol;
 
@@ -12,7 +13,13 @@ use Starutils\Starcorn\abstract\AbstractProtocol;
 final class H11Protocol extends AbstractProtocol
 {
     protected static string $sep = "\r\n";
-    protected string $protocol = 'HTTP/1.1';
+    protected static array $methods = [
+        'GET'=>true,
+        'POST'=>true
+    ];
+
+    protected string $protocol = 'HTTP';
+    protected string $protocol_version = '1.1';
 
     protected function init(): void
     {
@@ -24,20 +31,20 @@ final class H11Protocol extends AbstractProtocol
         $this->socket->listen(self::$config->socket_backlog());
     }
 
-    public function request_handler(string $id): bool
+    public function request_handler(string $id): void
     {
-        [$row, $buffer] = explode(self::$sep, $this->clients_buffer[$id], 2);
-        [$method, $path, $protocol] = explode(' ', $row);
-
-        if($this->protocol !== $protocol) return false;
-        [$headers, $body] = self::parse_buffer($buffer);
-
-        $app = self::$config->app();
-        $content = $app($method, $path, $protocol, $headers, $body);
-        $this->clients_write[$id] = $this->clients_read[$id];
-        $this->set_message($id, $content);
-        unset($this->clients_read[$id], $this->clients_buffer[$id]);
-        return true;
+        $scope = [];
+        $this->set_start_line($id, $scope);
+        if ($this->is_current_request($scope))
+        {
+            $this->set_client_address($id, $scope);
+            $this->parse_body_request($id, $scope);
+            $app = self::$config->app();
+            $content = $app($scope);
+            $this->clients_write[$id] = $this->clients_read[$id];
+            $this->set_message($id, $content);
+        }
+        unset($this->clients_read[$id], $this->clients_buffer[$id], $scope);
     }
 
     public function connect(string $key): void
@@ -46,7 +53,7 @@ final class H11Protocol extends AbstractProtocol
         $this->clients_read[$key] = $socket;
     }
 
-    public function disconnect(string $id, \Socket $client): void {
+    public function disconnect(string $id, Socket $client): void {
         $this->socket::close($client);
         unset(
             $this->clients_read[$id],
@@ -57,9 +64,10 @@ final class H11Protocol extends AbstractProtocol
         );
     }
 
-    public function set_buffer(string $id, string $value): void
+    public function set_buffer(string $id, string $value, bool $add = true): void
     {
-        @$this->clients_buffer[$id] .= $value;
+        if($add) @$this->clients_buffer[$id] .= $value;
+        else $this->clients_buffer[$id] = $value;
     }
 
     public function get_buffer(string $id): ?string
@@ -81,10 +89,42 @@ final class H11Protocol extends AbstractProtocol
         return $this->clients_message[$id];
     }
 
-    protected static function parse_buffer(string $buffer): array
+    protected function set_client_address(string $id, array &$scope): void
+    {
+        socket_getpeername($this->clients_read[$id], $ip, $port);
+        $scope['ip'] = $ip;
+        $scope['port'] = $port;
+    }
+
+    protected function set_start_line(string $id, array &$scope): void
+    {
+        [$row, $buffer] = explode(self::$sep, $this->get_buffer($id), 2);
+        [$method, $path, $protocol] = explode(' ', $row);
+        $scope['method'] = $method;
+        $scope['path'] = $path;
+
+        [$protocol, $protocol_version] = explode("/", $protocol);
+        $scope['protocol'] = $protocol;
+        $scope['protocol_version'] = $protocol_version;
+
+        $this->set_buffer($id, $buffer, false);
+    }
+
+    protected function is_current_request(array $scope): bool
+    {
+        if($this->protocol !== $scope['protocol'] ||
+            $this->protocol_version !== $scope['protocol_version']) return false;
+
+        if (!array_key_exists($scope['method'], self::$methods)) return false;
+
+        return true;
+    }
+
+    protected function parse_body_request(string $id, array &$scope): void
     {
         $body = '';
         $headers = array();
+        $buffer = $this->clients_buffer[$id];
 
         while($buffer)
         {
@@ -98,6 +138,8 @@ final class H11Protocol extends AbstractProtocol
                 break;
             }
         }
-        return [$headers, $body];
+
+        $scope['body'] = $body;
+        $scope['headers'] = $headers;
     }
 }

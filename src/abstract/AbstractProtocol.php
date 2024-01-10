@@ -8,6 +8,7 @@ use Starutils\Starcorn\{Config, StarSocket};
 abstract class AbstractProtocol
 {
     protected string $protocol;
+    protected string $protocol_version;
 
     protected array $clients_read = array();
     protected array $clients_write = array();
@@ -37,7 +38,7 @@ abstract class AbstractProtocol
 
     protected abstract function init(): void;
 
-    public abstract function request_handler(string $id): bool;
+    public abstract function request_handler(string $id): void;
 
     public abstract function connect(string $key): void;
 
